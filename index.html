@@ -246,6 +246,90 @@
     text-overflow: ellipsis;
   }
 
+  /* CHANNEL LIST */
+  .channel-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+
+  .channel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .channel-header span {
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  .channel-search {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: var(--text);
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    outline: none;
+    width: 160px;
+  }
+  .channel-search:focus { border-color: var(--accent); }
+
+  .channel-list {
+    max-height: 260px;
+    overflow-y: auto;
+  }
+
+  .channel-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .channel-item:last-child { border-bottom: none; }
+  .channel-item:active, .channel-item.playing { background: rgba(232,255,71,0.06); }
+  .channel-item.playing .ch-name { color: var(--accent); }
+
+  .ch-logo {
+    width: 32px;
+    height: 32px;
+    object-fit: contain;
+    border-radius: 4px;
+    background: var(--border);
+    flex-shrink: 0;
+  }
+
+  .ch-info { min-width: 0; }
+
+  .ch-name {
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ch-group {
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+
   /* UPLOAD */
   .upload-zone {
     border: 2px dashed var(--border);
@@ -362,6 +446,14 @@
     </div>
   </div>
 
+  <div id="channel-section" class="channel-section" style="display:none">
+    <div class="channel-header">
+      <span>Canais IPTV — <span id="channel-count">0</span></span>
+      <input class="channel-search" id="channel-search" type="text" placeholder="Filtrar..." oninput="filterChannels(this.value)">
+    </div>
+    <div class="channel-list" id="channel-list"></div>
+  </div>
+
   <div class="upload-zone" id="drop-zone">
     <div class="upload-icon">📁</div>
     <div class="upload-text">Arrastar vídeo / toque para escolher</div>
@@ -388,7 +480,6 @@
 
   // ── STATUS DOTS ──────────────────────────────────────────
   function setDot(id, state) {
-    // state: '' | 'active' | 'warn'
     document.getElementById(id).className = 'dot ' + state;
   }
 
@@ -426,55 +517,151 @@
     }
   }
 
-  // Re-adquirir WakeLock quando página volta ao foco (carro pode soltar)
   document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible') {
       setDot('dot-vis', 'active');
       if (wakeLock === null) await acquireWakeLock();
-      // Retomar vídeo se estava a tocar
-      if (vid._wasPlaying) {
-        try { await vid.play(); } catch(_) {}
-      }
+      if (vid._wasPlaying) vid.play().catch(() => {});
     } else {
       setDot('dot-vis', 'warn');
       vid._wasPlaying = !vid.paused;
     }
   });
 
-  // ── ANTI-PAUSE em visibilitychange ────────────────────────
-  // Alguns browsers param o vídeo; forçamos retoma
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') return;
+  // ── AUTO-RESUME (qualquer pause não intencional) ──────────
+  let userPaused = false;
+  let autoResumeCount = 0;
+  let lastAutoResume = 0;
+
+  vid.addEventListener('pause', () => {
+    setDot('dot-play', '');
+    if (userPaused || vid.ended) return;
+    const now = Date.now();
+    if (now - lastAutoResume < 1500) { autoResumeCount++; } else { autoResumeCount = 1; }
+    lastAutoResume = now;
+    if (autoResumeCount >= 5) { log('Pause persistente — carrega play manual', 'warn'); return; }
     setTimeout(() => {
-      if (vid.paused && vid._wasPlaying) {
+      if (!userPaused && !vid.ended && vid.paused) {
         vid.play().catch(() => {});
       }
-    }, 300);
+    }, 150);
   });
 
-  // Bloquear pause automático por policy (Android WebView / alguns HU)
-  vid.addEventListener('pause', () => {
-    if (document.visibilityState === 'hidden') {
-      vid._wasPlaying = true;
-    }
-    setDot('dot-play', '');
-  });
-
-  vid.addEventListener('play', () => setDot('dot-play', 'active'));
-  vid.addEventListener('playing', () => {
-    setDot('dot-play', 'active');
-    overlay.classList.add('hidden');
-  });
+  vid.addEventListener('play',    () => { autoResumeCount = 0; setDot('dot-play', 'active'); });
+  vid.addEventListener('playing', () => { setDot('dot-play', 'active'); overlay.classList.add('hidden'); });
   vid.addEventListener('waiting', () => setDot('dot-play', 'warn'));
-  vid.addEventListener('error', (e) => {
-    log('Erro no vídeo: ' + (vid.error?.message || e.type), 'warn');
-  });
+  vid.addEventListener('error',   () => log('Erro no vídeo: ' + (vid.error?.message || '?'), 'warn'));
+
+  // ── HLS.JS (lazy) ─────────────────────────────────────────
+  let hlsInstance = null;
+
+  function destroyHls() {
+    if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+  }
+
+  function loadHlsJs(cb) {
+    if (window.Hls) { cb(); return; }
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js';
+    s.onload = cb;
+    document.head.appendChild(s);
+  }
+
+  function playHls(src) {
+    destroyHls();
+    if (vid.canPlayType('application/vnd.apple.mpegurl')) {
+      // Safari / WebKit — suporte nativo
+      vid.src = src;
+      vid.play().catch(() => log('Autoplay bloqueado — carrega play manual', 'warn'));
+    } else {
+      loadHlsJs(() => {
+        if (!Hls.isSupported()) { log('HLS não suportado neste browser', 'warn'); return; }
+        hlsInstance = new Hls({ enableWorker: false });
+        hlsInstance.loadSource(src);
+        hlsInstance.attachMedia(vid);
+        hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+          vid.play().catch(() => log('Autoplay bloqueado — carrega play manual', 'warn'));
+        });
+        hlsInstance.on(Hls.Events.ERROR, (_, d) => {
+          if (d.fatal) log('Erro HLS: ' + d.details, 'warn');
+        });
+      });
+    }
+  }
+
+  // ── IPTV M3U8 PARSER ──────────────────────────────────────
+  let allChannels = [];
+  let activeChannelEl = null;
+
+  function parseIPTV(text) {
+    const channels = [];
+    const lines = text.split('\n').map(l => l.trim());
+    let meta = null;
+    for (const line of lines) {
+      if (line.startsWith('#EXTINF:')) {
+        meta = { name: '', logo: '', group: '', url: '' };
+        const nameM = line.match(/,(.+)$/);
+        if (nameM) meta.name = nameM[1].trim();
+        const logoM = line.match(/tvg-logo="([^"]+)"/);
+        if (logoM) meta.logo = logoM[1];
+        const groupM = line.match(/group-title="([^"]+)"/);
+        if (groupM) meta.group = groupM[1];
+      } else if (meta && line && !line.startsWith('#')) {
+        meta.url = line;
+        channels.push(meta);
+        meta = null;
+      }
+    }
+    return channels;
+  }
+
+  function renderChannels(channels) {
+    allChannels = channels;
+    document.getElementById('channel-count').textContent = channels.length;
+    document.getElementById('channel-section').style.display = 'block';
+    filterChannels('');
+  }
+
+  function filterChannels(q) {
+    const term = q.toLowerCase();
+    const list = document.getElementById('channel-list');
+    list.innerHTML = '';
+    const filtered = term
+      ? allChannels.filter(c => c.name.toLowerCase().includes(term) || c.group.toLowerCase().includes(term))
+      : allChannels;
+    filtered.forEach(ch => {
+      const el = document.createElement('div');
+      el.className = 'channel-item';
+      el.innerHTML = `
+        ${ch.logo ? `<img class="ch-logo" src="${ch.logo}" onerror="this.style.display='none'">` : '<div class="ch-logo"></div>'}
+        <div class="ch-info">
+          <div class="ch-name">${ch.name}</div>
+          ${ch.group ? `<div class="ch-group">${ch.group}</div>` : ''}
+        </div>`;
+      el.addEventListener('click', () => {
+        if (activeChannelEl) activeChannelEl.classList.remove('playing');
+        el.classList.add('playing');
+        activeChannelEl = el;
+        log('Canal: ' + ch.name, 'ok');
+        playStream(ch.url);
+      });
+      list.appendChild(el);
+    });
+  }
 
   // ── LOAD ──────────────────────────────────────────────────
   function loadUrl() {
-    const url = document.getElementById('url-input').value.trim();
-    if (!url) return;
-    loadSrc(url);
+    const raw = document.getElementById('url-input').value.trim();
+    if (!raw) return;
+    // Corrigir URL GitHub blob → raw automaticamente
+    const src = raw
+      .replace('https://github.com/', 'https://raw.githubusercontent.com/')
+      .replace('/blob/', '/');
+    if (src !== raw) {
+      document.getElementById('url-input').value = src;
+      log('URL GitHub convertido para raw', 'ok');
+    }
+    loadSrc(src);
   }
 
   function loadPreset(url) {
@@ -486,19 +673,67 @@
     const file = input.files[0];
     if (!file) return;
     const url = URL.createObjectURL(file);
-    log('Ficheiro local: ' + file.name, 'ok');
-    loadSrc(url, file.name);
+    if (file.name.endsWith('.m3u8') || file.name.endsWith('.m3u')) {
+      file.text().then(text => handleM3U(text, file.name));
+    } else {
+      log('Ficheiro local: ' + file.name, 'ok');
+      loadSrc(url, file.name);
+    }
   }
 
-  function loadSrc(src, label) {
-    vid.src = src;
-    vid.load();
-    vid.play().catch(() => {
-      log('Autoplay bloqueado — carrega o play manual', 'warn');
-    });
-    overlay.classList.add('hidden');
-    log('A carregar: ' + (label || src.split('/').pop()), 'ok');
+  async function loadSrc(src, label) {
+    document.getElementById('channel-section').style.display = 'none';
+    allChannels = [];
+    activeChannelEl = null;
     acquireWakeLock();
+
+    const isM3U = /\.(m3u8|m3u)(\?|$)/i.test(src);
+    if (!isM3U) {
+      playStream(src);
+      log('A carregar: ' + (label || src.split('/').pop()), 'ok');
+      return;
+    }
+
+    log('A ler playlist M3U8…', 'ok');
+    try {
+      const res = await fetch(src);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const text = await res.text();
+      handleM3U(text, src);
+    } catch (e) {
+      log('Não foi possível ler playlist: ' + e.message, 'warn');
+      // Tentar tocar diretamente (pode ser HLS nativo)
+      playStream(src);
+    }
+  }
+
+  function handleM3U(text, src) {
+    if (text.includes('#EXTINF:')) {
+      const channels = parseIPTV(text);
+      if (channels.length > 0) {
+        log(`Playlist IPTV: ${channels.length} canais`, 'ok');
+        renderChannels(channels);
+        return;
+      }
+    }
+    // Não é IPTV — é um stream HLS normal
+    log('Stream HLS: ' + (typeof src === 'string' ? src.split('/').pop() : src), 'ok');
+    playStream(typeof src === 'string' ? src : URL.createObjectURL(new Blob([src])));
+  }
+
+  function playStream(src) {
+    destroyHls();
+    overlay.classList.add('hidden');
+    userPaused = false;
+    autoResumeCount = 0;
+    const isHls = /\.(m3u8)(\?|$)/i.test(src) || /\.ts(\?|$)/i.test(src);
+    if (isHls) {
+      playHls(src);
+    } else {
+      vid.src = src;
+      vid.load();
+      vid.play().catch(() => log('Autoplay bloqueado — carrega play manual', 'warn'));
+    }
   }
 
   // ── LOOP ──────────────────────────────────────────────────
@@ -528,11 +763,14 @@
     e.preventDefault();
     dz.classList.remove('dragover');
     const file = e.dataTransfer.files[0];
-    if (file?.type.startsWith('video/')) loadFile({ files: [file] });
+    if (file?.type.startsWith('video/') || file?.name.match(/\.m3u8?$/i)) {
+      loadFile({ files: [file] });
+    }
   });
 
   // ── INIT ──────────────────────────────────────────────────
   setDot('dot-vis', 'active');
+  acquireWakeLock();
   log('Abre um vídeo para começar.');
 </script>
 </body>

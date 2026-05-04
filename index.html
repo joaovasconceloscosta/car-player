@@ -7,6 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-fullscreen">
   <title>Car Player</title>
+  <!-- YouTube IFrame API loaded on demand -->
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -325,11 +326,55 @@
       padding: 18px 28px;
       text-align: center;
       display: none;
+      z-index: 20;
     }
 
     #resume-badge p { margin-bottom: 12px; font-size: 1rem; }
 
     #resume-badge .btn { font-size: 0.9rem; padding: 12px 22px; }
+
+    /* YouTube container */
+    #yt-wrap {
+      display: none;
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+    }
+
+    #yt-wrap iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+
+    /* In YouTube mode, hide HTML5-only controls */
+    .player-screen--youtube #tap-back,
+    .player-screen--youtube #tap-fwd,
+    .player-screen--youtube #overlay-bottom { display: none; }
+
+    .player-screen--youtube #overlay {
+      background: linear-gradient(to bottom, rgba(0,0,0,0.6) 0%, transparent 30%);
+      pointer-events: none;
+    }
+
+    .player-screen--youtube #overlay-top {
+      pointer-events: all;
+    }
+
+    /* Error message */
+    #error-msg {
+      display: none;
+      position: fixed;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #c0392b;
+      color: #fff;
+      border-radius: 8px;
+      padding: 10px 20px;
+      font-size: 0.9rem;
+      z-index: 50;
+    }
   </style>
 </head>
 <body>
@@ -339,7 +384,7 @@
   <h1>Car <span>Player</span></h1>
 
   <div class="url-row">
-    <input id="urlInput" type="url" inputmode="url" placeholder="Cole URL do vídeo (mp4, webm…)" autocomplete="off" autocorrect="off" spellcheck="false">
+    <input id="urlInput" type="url" inputmode="url" placeholder="URL do vídeo ou YouTube" autocomplete="off" autocorrect="off" spellcheck="false">
     <button class="btn btn-primary" onclick="playUrl()">Play</button>
   </div>
 
@@ -361,6 +406,7 @@
 <!-- PLAYER -->
 <div id="player-screen">
   <video id="vid" playsinline webkit-playsinline x5-playsinline preload="auto"></video>
+  <div id="yt-wrap"></div>
 
   <!-- Tap zones (skip) -->
   <div id="tap-back" ontouchend="skipBack(event)">
@@ -369,6 +415,9 @@
   <div id="tap-fwd" ontouchend="skipFwd(event)">
     <div class="tap-hint">+10s</div>
   </div>
+
+  <!-- Error message -->
+  <div id="error-msg"></div>
 
   <!-- Resume badge -->
   <div id="resume-badge">
@@ -428,12 +477,20 @@
 <script>
 // ── State ──────────────────────────────────────────────────────────────────
 const vid = document.getElementById('vid');
+const playerScreen = document.getElementById('player-screen');
 let overlayTimer = null;
 let wakeLock = null;
-let userPaused = false;  // true only when USER explicitly pauses
+let userPaused = false;
 let resumeBadgeShown = false;
 let seeking = false;
 let objectUrl = null;
+
+// YouTube state
+let currentMode = 'video'; // 'video' | 'youtube'
+let ytPlayer = null;
+let ytApiLoaded = false;
+let ytApiReady = false;
+let ytPending = null; // { id, title } waiting for API
 
 // ── Wake Lock ──────────────────────────────────────────────────────────────
 async function acquireWakeLock() {
@@ -444,7 +501,7 @@ async function acquireWakeLock() {
     wakeLock.addEventListener('release', () => {
       document.getElementById('wakeDot').classList.remove('active');
     });
-  } catch (e) { /* not supported or denied */ }
+  } catch (e) {}
 }
 
 document.addEventListener('visibilitychange', async () => {
@@ -455,27 +512,134 @@ document.addEventListener('visibilitychange', async () => {
 
 acquireWakeLock();
 
+// ── YouTube URL detection ──────────────────────────────────────────────────
+function extractYoutubeId(url) {
+  try {
+    const u = new URL(url);
+    if (u.hostname.includes('youtube.com')) {
+      if (u.pathname === '/watch') return u.searchParams.get('v');
+      const m = u.pathname.match(/\/(?:shorts|embed)\/([^/?&#]+)/);
+      if (m) return m[1];
+    }
+    if (u.hostname === 'youtu.be') return u.pathname.slice(1).split('?')[0];
+  } catch(e) {}
+  return null;
+}
+
+// ── YouTube IFrame API ─────────────────────────────────────────────────────
+function loadYouTubeAPI() {
+  if (ytApiLoaded) return;
+  ytApiLoaded = true;
+  const tag = document.createElement('script');
+  tag.src = 'https://www.youtube.com/iframe_api';
+  document.head.appendChild(tag);
+}
+
+window.onYouTubeIframeAPIReady = function() {
+  ytApiReady = true;
+  if (ytPending) {
+    createYtPlayer(ytPending.id, ytPending.title);
+    ytPending = null;
+  }
+};
+
+function startYoutube(videoId, title) {
+  currentMode = 'youtube';
+  vid.style.display = 'none';
+  document.getElementById('yt-wrap').style.display = 'block';
+  playerScreen.classList.add('player-screen--youtube');
+  document.getElementById('overlay-title').textContent = 'YouTube';
+  showPlayer();
+  userPaused = false;
+
+  if (ytPlayer) {
+    ytPlayer.destroy();
+    ytPlayer = null;
+  }
+  // Clear previous iframe
+  document.getElementById('yt-wrap').innerHTML = '';
+
+  if (ytApiReady) {
+    createYtPlayer(videoId, title);
+  } else {
+    ytPending = { id: videoId, title };
+    loadYouTubeAPI();
+  }
+}
+
+function createYtPlayer(videoId, title) {
+  const container = document.getElementById('yt-wrap');
+  const div = document.createElement('div');
+  div.id = 'yt-player-el';
+  container.appendChild(div);
+
+  document.getElementById('overlay-title').textContent = title || 'YouTube';
+
+  ytPlayer = new YT.Player('yt-player-el', {
+    videoId,
+    width: '100%',
+    height: '100%',
+    playerVars: {
+      autoplay: 1,
+      playsinline: 1,
+      rel: 0,
+      modestbranding: 1,
+    },
+    events: {
+      onReady: e => {
+        e.target.playVideo();
+        tryFullscreen();
+      },
+      onStateChange: e => {
+        // YT.PlayerState.PAUSED = 2
+        if (e.data === 2 && !userPaused && currentMode === 'youtube') {
+          setTimeout(() => {
+            if (!userPaused && ytPlayer && ytPlayer.getPlayerState() === 2) {
+              ytPlayer.playVideo();
+            }
+          }, 120);
+        }
+      },
+      onError: () => showError('Erro ao carregar vídeo do YouTube'),
+    },
+  });
+}
+
 // ── Navigation ─────────────────────────────────────────────────────────────
 function showPlayer() {
   document.getElementById('home').style.display = 'none';
-  document.getElementById('player-screen').style.display = 'block';
+  playerScreen.style.display = 'block';
   showOverlay();
 }
 
 function goHome() {
-  vid.pause();
-  vid.src = '';
-  if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
-  document.getElementById('player-screen').style.display = 'none';
+  if (currentMode === 'youtube') {
+    if (ytPlayer) { ytPlayer.destroy(); ytPlayer = null; }
+    document.getElementById('yt-wrap').style.display = 'none';
+    document.getElementById('yt-wrap').innerHTML = '';
+    playerScreen.classList.remove('player-screen--youtube');
+  } else {
+    vid.pause();
+    vid.src = '';
+    if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
+  }
+  vid.style.display = 'block';
+  playerScreen.style.display = 'none';
   document.getElementById('home').style.display = 'flex';
   userPaused = false;
+  currentMode = 'video';
   hideBadge();
 }
 
 function playUrl() {
   const url = document.getElementById('urlInput').value.trim();
   if (!url) return;
-  startVideo(url, url.split('/').pop().split('?')[0] || 'Vídeo');
+  const ytId = extractYoutubeId(url);
+  if (ytId) {
+    startYoutube(ytId, 'YouTube');
+  } else {
+    startVideo(url, url.split('/').pop().split('?')[0] || 'Vídeo');
+  }
 }
 
 function playFile(input) {
@@ -487,6 +651,10 @@ function playFile(input) {
 }
 
 function startVideo(src, title) {
+  currentMode = 'video';
+  vid.style.display = 'block';
+  document.getElementById('yt-wrap').style.display = 'none';
+  playerScreen.classList.remove('player-screen--youtube');
   vid.src = src;
   document.getElementById('overlay-title').textContent = title;
   showPlayer();
@@ -494,32 +662,22 @@ function startVideo(src, title) {
   vid.play().catch(() => {});
 }
 
-// ── Auto-resume ────────────────────────────────────────────────────────────
-// Intercept any pause NOT caused by the user and resume immediately.
-// If the browser/OS keeps re-pausing, show the badge after 3 attempts.
+// ── HTML5 Auto-resume ──────────────────────────────────────────────────────
 let autoResumeCount = 0;
 let lastAutoResume = 0;
 
 vid.addEventListener('pause', () => {
-  if (userPaused) return;
-  if (vid.ended) return;
+  if (currentMode !== 'video') return;
+  if (userPaused || vid.ended) return;
 
   const now = Date.now();
-  if (now - lastAutoResume < 1500) {
-    autoResumeCount++;
-  } else {
-    autoResumeCount = 1;
-  }
+  if (now - lastAutoResume < 1500) { autoResumeCount++; } else { autoResumeCount = 1; }
   lastAutoResume = now;
 
-  if (autoResumeCount >= 4) {
-    // Browser is really blocking autoplay — show badge
-    showBadge();
-    return;
-  }
+  if (autoResumeCount >= 4) { showBadge(); return; }
 
   setTimeout(() => {
-    if (!userPaused && !vid.ended) {
+    if (!userPaused && !vid.ended && currentMode === 'video') {
       vid.play().catch(() => showBadge());
     }
   }, 120);
@@ -549,29 +707,38 @@ function hideBadge() {
 function manualResume() {
   userPaused = false;
   hideBadge();
-  vid.play();
+  if (currentMode === 'youtube' && ytPlayer) ytPlayer.playVideo();
+  else vid.play();
 }
 
 // ── Controls ───────────────────────────────────────────────────────────────
 function togglePlay() {
-  if (vid.paused) {
-    userPaused = false;
-    vid.play();
-  } else {
-    userPaused = true;
-    vid.pause();
+  if (currentMode === 'youtube' && ytPlayer) {
+    if (ytPlayer.getPlayerState() === 1) { userPaused = true; ytPlayer.pauseVideo(); }
+    else { userPaused = false; ytPlayer.playVideo(); }
+    return;
   }
+  if (vid.paused) { userPaused = false; vid.play(); }
+  else { userPaused = true; vid.pause(); }
 }
 
 function skipBack(e) {
   if (e && e.target !== document.getElementById('tap-back')) return;
-  vid.currentTime = Math.max(0, vid.currentTime - 10);
+  if (currentMode === 'youtube' && ytPlayer) {
+    ytPlayer.seekTo(Math.max(0, ytPlayer.getCurrentTime() - 10), true);
+  } else {
+    vid.currentTime = Math.max(0, vid.currentTime - 10);
+  }
   flashSkip('−10s');
 }
 
 function skipFwd(e) {
   if (e && e.target !== document.getElementById('tap-fwd')) return;
-  vid.currentTime = Math.min(vid.duration || 0, vid.currentTime + 10);
+  if (currentMode === 'youtube' && ytPlayer) {
+    ytPlayer.seekTo(ytPlayer.getCurrentTime() + 10, true);
+  } else {
+    vid.currentTime = Math.min(vid.duration || 0, vid.currentTime + 10);
+  }
   flashSkip('+10s');
 }
 
@@ -636,7 +803,7 @@ function hideOverlay() {
 }
 
 document.getElementById('overlay').addEventListener('pointerdown', showOverlay);
-document.getElementById('player-screen').addEventListener('pointerdown', e => {
+playerScreen.addEventListener('pointerdown', e => {
   const overlay = document.getElementById('overlay');
   if (!overlay.classList.contains('visible')) {
     e.stopPropagation();
@@ -645,22 +812,19 @@ document.getElementById('player-screen').addEventListener('pointerdown', e => {
 });
 
 // ── Fullscreen ─────────────────────────────────────────────────────────────
-function toggleFullscreen() {
-  const el = document.getElementById('player-screen');
+function tryFullscreen() {
+  const el = playerScreen;
   if (!document.fullscreenElement) {
-    (el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen).call(el);
-  } else {
-    (document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen).call(document);
+    try { (el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen).call(el); } catch(e) {}
   }
 }
 
-// Auto fullscreen on play start
-vid.addEventListener('play', () => {
-  if (!document.fullscreenElement) {
-    const el = document.getElementById('player-screen');
-    try { (el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen).call(el); } catch(e){}
-  }
-}, { once: false });
+function toggleFullscreen() {
+  if (!document.fullscreenElement) tryFullscreen();
+  else (document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen).call(document);
+}
+
+vid.addEventListener('play', tryFullscreen);
 
 // ── Flash skip hint ────────────────────────────────────────────────────────
 let flashEl = null;
@@ -672,7 +836,7 @@ function flashSkip(msg) {
       background:rgba(0,0,0,0.65);color:#fff;font-size:1.3rem;font-weight:600;
       padding:12px 24px;border-radius:10px;pointer-events:none;
       transition:opacity 0.4s;z-index:100;`;
-    document.getElementById('player-screen').appendChild(flashEl);
+    playerScreen.appendChild(flashEl);
   }
   flashEl.textContent = msg;
   flashEl.style.opacity = '1';
@@ -680,11 +844,23 @@ function flashSkip(msg) {
   flashEl._t = setTimeout(() => { flashEl.style.opacity = '0'; }, 700);
 }
 
+// ── Error message ──────────────────────────────────────────────────────────
+function showError(msg) {
+  const el = document.getElementById('error-msg');
+  el.textContent = msg;
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 4000);
+}
+
 // ── URL param autoplay ─────────────────────────────────────────────────────
 (function() {
   const p = new URLSearchParams(location.search);
   const src = p.get('src');
-  if (src) startVideo(decodeURIComponent(src), src.split('/').pop().split('?')[0] || 'Vídeo');
+  if (!src) return;
+  const decoded = decodeURIComponent(src);
+  const ytId = extractYoutubeId(decoded);
+  if (ytId) startYoutube(ytId, 'YouTube');
+  else startVideo(decoded, decoded.split('/').pop().split('?')[0] || 'Vídeo');
 })();
 </script>
 </body>

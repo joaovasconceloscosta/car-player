@@ -89,15 +89,29 @@
     aspect-ratio: 16/9;
   }
 
+  /* Video kept alive for decode; canvas displays the frames */
   .video-container video {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     object-fit: contain;
-    display: block;
+    opacity: 0.01;
+    z-index: 0;
+  }
+
+  #vid-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+    background: #000;
   }
 
   .video-overlay {
     position: absolute;
+    z-index: 2;
     inset: 0;
     display: flex;
     align-items: center;
@@ -397,6 +411,7 @@
   <div class="video-container">
     <video id="vid" playsinline webkit-playsinline x5-playsinline
            preload="auto" controls></video>
+    <canvas id="vid-canvas"></canvas>
     <div class="video-overlay" id="overlay">Sem vídeo</div>
   </div>
 
@@ -468,6 +483,41 @@
   const vid = document.getElementById('vid');
   const overlay = document.getElementById('overlay');
   const logEl = document.getElementById('log');
+  const vidCanvas = document.getElementById('vid-canvas');
+  const vidCtx = vidCanvas.getContext('2d');
+  let canvasRaf = null;
+
+  // ── CANVAS RENDER LOOP ────────────────────────────────────
+  // Tesla freezes <video> display when driving but decode continues
+  // (proven by audio still playing). Canvas is not blocked, so we
+  // draw each decoded frame here instead.
+  function startCanvasLoop() {
+    if (canvasRaf) return;
+    const container = vidCanvas.parentElement;
+    vidCanvas.width  = container.clientWidth  * (window.devicePixelRatio || 1);
+    vidCanvas.height = container.clientHeight * (window.devicePixelRatio || 1);
+
+    function draw() {
+      if (vid.readyState >= 2 && vid.videoWidth > 0) {
+        const cw = vidCanvas.width, ch = vidCanvas.height;
+        const vw = vid.videoWidth,  vh = vid.videoHeight;
+        const scale = Math.min(cw / vw, ch / vh);
+        const dw = vw * scale, dh = vh * scale;
+        const dx = (cw - dw) / 2, dy = (ch - dh) / 2;
+        vidCtx.fillStyle = '#000';
+        vidCtx.fillRect(0, 0, cw, ch);
+        vidCtx.drawImage(vid, dx, dy, dw, dh);
+      }
+      canvasRaf = requestAnimationFrame(draw);
+    }
+    draw();
+    log('Canvas render ativo', 'ok');
+  }
+
+  function stopCanvasLoop() {
+    if (canvasRaf) { cancelAnimationFrame(canvasRaf); canvasRaf = null; }
+    vidCtx.clearRect(0, 0, vidCanvas.width, vidCanvas.height);
+  }
 
   // ── LOGGING ──────────────────────────────────────────────
   function log(msg, type = '') {
@@ -548,8 +598,13 @@
   });
 
   vid.addEventListener('play',    () => { autoResumeCount = 0; setDot('dot-play', 'active'); });
-  vid.addEventListener('playing', () => { setDot('dot-play', 'active'); overlay.classList.add('hidden'); });
+  vid.addEventListener('playing', () => {
+    setDot('dot-play', 'active');
+    overlay.classList.add('hidden');
+    startCanvasLoop();
+  });
   vid.addEventListener('waiting', () => setDot('dot-play', 'warn'));
+  vid.addEventListener('ended',   () => stopCanvasLoop());
   vid.addEventListener('error',   () => log('Erro no vídeo: ' + (vid.error?.message || '?'), 'warn'));
 
   // ── HLS.JS (lazy) ─────────────────────────────────────────
@@ -722,6 +777,7 @@
   }
 
   function playStream(src) {
+    stopCanvasLoop();
     destroyHls();
     overlay.classList.add('hidden');
     userPaused = false;

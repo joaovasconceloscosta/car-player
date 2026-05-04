@@ -148,11 +148,26 @@
       background: #000;
     }
 
+    /* Video element kept rendered so Tesla doesn't stop decoding;
+       canvas sits on top showing frames via drawImage */
     #vid {
+      position: absolute;
+      inset: 0;
       width: 100%;
       height: 100%;
       object-fit: contain;
-      display: block;
+      opacity: 0.001;
+      z-index: 0;
+    }
+
+    #vid-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: none;
+      z-index: 1;
+      background: #000;
     }
 
     /* Overlay controls */
@@ -406,6 +421,7 @@
 <!-- PLAYER -->
 <div id="player-screen">
   <video id="vid" playsinline webkit-playsinline x5-playsinline preload="auto"></video>
+  <canvas id="vid-canvas"></canvas>
   <div id="yt-wrap"></div>
 
   <!-- Tap zones (skip) -->
@@ -496,6 +512,11 @@ let ytPending = null; // { id, title } waiting for API
 let hlsInstance = null;
 let hlsJsLoaded = false;
 
+// Canvas rendering (Tesla bypass)
+const canvas = document.getElementById('vid-canvas');
+const ctx = canvas.getContext('2d');
+let canvasRaf = null;
+
 // ── Wake Lock ──────────────────────────────────────────────────────────────
 async function acquireWakeLock() {
   if (!('wakeLock' in navigator)) return;
@@ -552,6 +573,29 @@ function attachHls(src) {
       });
     });
   }
+}
+
+// ── Canvas render loop (Tesla video-display bypass) ───────────────────────
+function startCanvasRender() {
+  stopCanvasRender();
+  canvas.style.display = 'block';
+  // Match canvas resolution to container once
+  canvas.width = playerScreen.clientWidth || window.innerWidth;
+  canvas.height = playerScreen.clientHeight || window.innerHeight;
+
+  function draw() {
+    if (vid.readyState >= 2) {
+      ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+    }
+    canvasRaf = requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+function stopCanvasRender() {
+  if (canvasRaf) { cancelAnimationFrame(canvasRaf); canvasRaf = null; }
+  canvas.style.display = 'none';
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
 
 // ── YouTube URL detection ──────────────────────────────────────────────────
@@ -662,6 +706,7 @@ function goHome() {
     playerScreen.classList.remove('player-screen--youtube');
   } else {
     vid.pause();
+    stopCanvasRender();
     destroyHls();
     vid.src = '';
     if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
@@ -695,12 +740,12 @@ function playFile(input) {
 
 function startVideo(src, title) {
   currentMode = 'video';
-  vid.style.display = 'block';
   document.getElementById('yt-wrap').style.display = 'none';
   playerScreen.classList.remove('player-screen--youtube');
   document.getElementById('overlay-title').textContent = title;
   showPlayer();
   userPaused = false;
+  stopCanvasRender();
   destroyHls();
   if (isHlsUrl(src)) {
     attachHls(src);
@@ -735,6 +780,7 @@ vid.addEventListener('play', () => {
   hideBadge();
   autoResumeCount = 0;
   updatePlayBtn(true);
+  if (currentMode === 'video' && !canvasRaf) startCanvasRender();
 });
 
 vid.addEventListener('pause', () => updatePlayBtn(false));

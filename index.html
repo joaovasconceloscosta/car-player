@@ -492,6 +492,10 @@ let ytApiLoaded = false;
 let ytApiReady = false;
 let ytPending = null; // { id, title } waiting for API
 
+// HLS state
+let hlsInstance = null;
+let hlsJsLoaded = false;
+
 // ── Wake Lock ──────────────────────────────────────────────────────────────
 async function acquireWakeLock() {
   if (!('wakeLock' in navigator)) return;
@@ -511,6 +515,44 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 acquireWakeLock();
+
+// ── HLS / M3U8 support ────────────────────────────────────────────────────
+function isHlsUrl(url) {
+  return /\.m3u8(\?|$)/i.test(url);
+}
+
+function destroyHls() {
+  if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+}
+
+function loadHlsJs(cb) {
+  if (window.Hls) { cb(); return; }
+  const s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js';
+  s.onload = cb;
+  document.head.appendChild(s);
+  hlsJsLoaded = true;
+}
+
+function attachHls(src) {
+  destroyHls();
+  if (vid.canPlayType('application/vnd.apple.mpegurl')) {
+    // Native HLS (Safari/WebKit — most car browsers)
+    vid.src = src;
+    vid.play().catch(() => {});
+  } else {
+    loadHlsJs(() => {
+      if (!Hls.isSupported()) { showError('HLS não suportado neste browser'); return; }
+      hlsInstance = new Hls({ enableWorker: false });
+      hlsInstance.loadSource(src);
+      hlsInstance.attachMedia(vid);
+      hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => vid.play().catch(() => {}));
+      hlsInstance.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) showError('Erro ao carregar stream HLS');
+      });
+    });
+  }
+}
 
 // ── YouTube URL detection ──────────────────────────────────────────────────
 function extractYoutubeId(url) {
@@ -620,6 +662,7 @@ function goHome() {
     playerScreen.classList.remove('player-screen--youtube');
   } else {
     vid.pause();
+    destroyHls();
     vid.src = '';
     if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
   }
@@ -638,7 +681,7 @@ function playUrl() {
   if (ytId) {
     startYoutube(ytId, 'YouTube');
   } else {
-    startVideo(url, url.split('/').pop().split('?')[0] || 'Vídeo');
+    startVideo(url, url.split('/').pop().split('?')[0] || 'Stream');
   }
 }
 
@@ -655,11 +698,16 @@ function startVideo(src, title) {
   vid.style.display = 'block';
   document.getElementById('yt-wrap').style.display = 'none';
   playerScreen.classList.remove('player-screen--youtube');
-  vid.src = src;
   document.getElementById('overlay-title').textContent = title;
   showPlayer();
   userPaused = false;
-  vid.play().catch(() => {});
+  destroyHls();
+  if (isHlsUrl(src)) {
+    attachHls(src);
+  } else {
+    vid.src = src;
+    vid.play().catch(() => {});
+  }
 }
 
 // ── HTML5 Auto-resume ──────────────────────────────────────────────────────

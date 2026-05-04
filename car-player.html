@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>CarPlay</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --border: #1e1e2e;
+    --accent: #e8ff47;
+    --accent2: #ff6b35;
+    --text: #f0f0f0;
+    --muted: #555566;
+    --radius: 12px;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Courier New', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+    touch-action: manipulation;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 4px;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+
+  .status-bar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: background 0.3s;
+  }
+  .dot.active { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .dot.warn { background: var(--accent2); box-shadow: 0 0 8px var(--accent2); }
+
+  .status-label {
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  main {
+    padding: 20px;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
+  /* VIDEO AREA */
+  .video-container {
+    position: relative;
+    background: #000;
+    border-radius: var(--radius);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    margin-bottom: 20px;
+    aspect-ratio: 16/9;
+  }
+
+  .video-container video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+
+  .video-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.6);
+    font-size: 13px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+    pointer-events: none;
+    transition: opacity 0.3s;
+  }
+  .video-overlay.hidden { opacity: 0; }
+
+  /* URL INPUT */
+  .input-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+
+  .input-label {
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    display: block;
+  }
+
+  .input-row {
+    display: flex;
+    gap: 10px;
+  }
+
+  input[type="text"] {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    color: var(--text);
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.2s;
+    min-width: 0;
+  }
+  input[type="text"]:focus { border-color: var(--accent); }
+  input[type="text"]::placeholder { color: var(--muted); }
+
+  .btn {
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 20px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.15s, transform 0.1s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn:active { opacity: 0.8; transform: scale(0.97); }
+
+  .btn-secondary {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:active { background: var(--border); }
+
+  /* CONTROLS */
+  .controls {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .control-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 8px;
+    color: var(--text);
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    cursor: pointer;
+    text-align: center;
+    transition: border-color 0.2s, background 0.2s;
+    -webkit-tap-highlight-color: transparent;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .control-btn:active { background: var(--border); }
+  .control-btn.active-state {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .control-icon { font-size: 20px; line-height: 1; }
+
+  /* PRESETS */
+  .presets {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .preset-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .preset-card:active { border-color: var(--accent); }
+
+  .preset-name {
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
+
+  .preset-url {
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* UPLOAD */
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    margin-bottom: 16px;
+    position: relative;
+  }
+  .upload-zone:hover, .upload-zone.dragover { border-color: var(--accent); }
+  .upload-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .upload-text { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); }
+  .upload-icon { font-size: 28px; margin-bottom: 8px; }
+
+  /* LOG */
+  .log {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    min-height: 36px;
+    max-height: 80px;
+    overflow-y: auto;
+  }
+
+  .log-line { margin-bottom: 2px; }
+  .log-line.ok { color: var(--accent); }
+  .log-line.warn { color: var(--accent2); }
+
+  /* FULLSCREEN nudge */
+  .fs-hint {
+    text-align: center;
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+    padding: 8px 0;
+  }
+
+  @media (max-width: 480px) {
+    .controls { grid-template-columns: repeat(2, 1fr); }
+    .presets { grid-template-columns: 1fr; }
+    .logo { font-size: 14px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">CARPLAY</div>
+  <div class="status-bar">
+    <div class="dot" id="dot-wake" title="WakeLock"></div>
+    <div class="dot" id="dot-vis" title="Visibility"></div>
+    <div class="dot" id="dot-play" title="Playing"></div>
+    <span class="status-label" id="status-text">idle</span>
+  </div>
+</header>
+
+<main>
+  <div class="video-container">
+    <video id="vid" playsinline webkit-playsinline x5-playsinline
+           preload="auto" controls></video>
+    <div class="video-overlay" id="overlay">Sem vídeo</div>
+  </div>
+
+  <div class="input-section">
+    <span class="input-label">URL do vídeo (MP4, HLS, WebM...)</span>
+    <div class="input-row">
+      <input type="text" id="url-input" placeholder="https://exemplo.com/video.mp4" />
+      <button class="btn" onclick="loadUrl()">▶ Load</button>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="control-btn" id="btn-wake" onclick="toggleWakeLock()">
+      <span class="control-icon">☀</span>
+      <span>Wake Lock</span>
+    </button>
+    <button class="control-btn" id="btn-loop" onclick="toggleLoop()">
+      <span class="control-icon">↻</span>
+      <span>Loop</span>
+    </button>
+    <button class="control-btn" onclick="toggleFullscreen()">
+      <span class="control-icon">⛶</span>
+      <span>Fullscreen</span>
+    </button>
+    <button class="control-btn" onclick="vid.currentTime = 0; vid.play()">
+      <span class="control-icon">⏮</span>
+      <span>Restart</span>
+    </button>
+  </div>
+
+  <div class="presets">
+    <div class="preset-card" onclick="loadPreset('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4')">
+      <div class="preset-name">Big Buck Bunny</div>
+      <div class="preset-url">gtv-videos-bucket / sample MP4</div>
+    </div>
+    <div class="preset-card" onclick="loadPreset('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4')">
+      <div class="preset-name">Elephants Dream</div>
+      <div class="preset-url">gtv-videos-bucket / sample MP4</div>
+    </div>
+    <div class="preset-card" onclick="loadPreset('https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8')">
+      <div class="preset-name">HLS Stream</div>
+      <div class="preset-url">mux.dev / test HLS</div>
+    </div>
+    <div class="preset-card" onclick="document.querySelector('.upload-zone input').click()">
+      <div class="preset-name">Ficheiro local</div>
+      <div class="preset-url">escolher do dispositivo</div>
+    </div>
+  </div>
+
+  <div class="upload-zone" id="drop-zone">
+    <div class="upload-icon">📁</div>
+    <div class="upload-text">Arrastar vídeo / toque para escolher</div>
+    <input type="file" accept="video/*" onchange="loadFile(this)">
+  </div>
+
+  <div class="log" id="log"><div class="log-line">Sistema iniciado.</div></div>
+  <div class="fs-hint">Dica: abre em fullscreen para evitar barra de endereço</div>
+</main>
+
+<script>
+  const vid = document.getElementById('vid');
+  const overlay = document.getElementById('overlay');
+  const logEl = document.getElementById('log');
+
+  // ── LOGGING ──────────────────────────────────────────────
+  function log(msg, type = '') {
+    const d = document.createElement('div');
+    d.className = 'log-line ' + type;
+    d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    logEl.prepend(d);
+    if (logEl.children.length > 20) logEl.lastChild.remove();
+  }
+
+  // ── STATUS DOTS ──────────────────────────────────────────
+  function setDot(id, state) {
+    // state: '' | 'active' | 'warn'
+    document.getElementById(id).className = 'dot ' + state;
+  }
+
+  // ── WAKE LOCK ─────────────────────────────────────────────
+  let wakeLock = null;
+
+  async function acquireWakeLock() {
+    if (!('wakeLock' in navigator)) {
+      log('WakeLock não suportado neste browser', 'warn');
+      setDot('dot-wake', 'warn');
+      return;
+    }
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      setDot('dot-wake', 'active');
+      log('WakeLock ativo — ecrã não vai bloquear', 'ok');
+      wakeLock.addEventListener('release', () => {
+        setDot('dot-wake', 'warn');
+        log('WakeLock liberado pelo sistema', 'warn');
+        wakeLock = null;
+      });
+    } catch (e) {
+      log('WakeLock falhou: ' + e.message, 'warn');
+      setDot('dot-wake', 'warn');
+    }
+  }
+
+  async function toggleWakeLock() {
+    if (wakeLock) {
+      await wakeLock.release();
+      document.getElementById('btn-wake').classList.remove('active-state');
+    } else {
+      await acquireWakeLock();
+      document.getElementById('btn-wake').classList.add('active-state');
+    }
+  }
+
+  // Re-adquirir WakeLock quando página volta ao foco (carro pode soltar)
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible') {
+      setDot('dot-vis', 'active');
+      if (wakeLock === null) await acquireWakeLock();
+      // Retomar vídeo se estava a tocar
+      if (vid._wasPlaying) {
+        try { await vid.play(); } catch(_) {}
+      }
+    } else {
+      setDot('dot-vis', 'warn');
+      vid._wasPlaying = !vid.paused;
+    }
+  });
+
+  // ── ANTI-PAUSE em visibilitychange ────────────────────────
+  // Alguns browsers param o vídeo; forçamos retoma
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') return;
+    setTimeout(() => {
+      if (vid.paused && vid._wasPlaying) {
+        vid.play().catch(() => {});
+      }
+    }, 300);
+  });
+
+  // Bloquear pause automático por policy (Android WebView / alguns HU)
+  vid.addEventListener('pause', () => {
+    if (document.visibilityState === 'hidden') {
+      vid._wasPlaying = true;
+    }
+    setDot('dot-play', '');
+  });
+
+  vid.addEventListener('play', () => setDot('dot-play', 'active'));
+  vid.addEventListener('playing', () => {
+    setDot('dot-play', 'active');
+    overlay.classList.add('hidden');
+  });
+  vid.addEventListener('waiting', () => setDot('dot-play', 'warn'));
+  vid.addEventListener('error', (e) => {
+    log('Erro no vídeo: ' + (vid.error?.message || e.type), 'warn');
+  });
+
+  // ── LOAD ──────────────────────────────────────────────────
+  function loadUrl() {
+    const url = document.getElementById('url-input').value.trim();
+    if (!url) return;
+    loadSrc(url);
+  }
+
+  function loadPreset(url) {
+    document.getElementById('url-input').value = url;
+    loadSrc(url);
+  }
+
+  function loadFile(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    log('Ficheiro local: ' + file.name, 'ok');
+    loadSrc(url, file.name);
+  }
+
+  function loadSrc(src, label) {
+    vid.src = src;
+    vid.load();
+    vid.play().catch(() => {
+      log('Autoplay bloqueado — carrega o play manual', 'warn');
+    });
+    overlay.classList.add('hidden');
+    log('A carregar: ' + (label || src.split('/').pop()), 'ok');
+    acquireWakeLock();
+  }
+
+  // ── LOOP ──────────────────────────────────────────────────
+  function toggleLoop() {
+    vid.loop = !vid.loop;
+    document.getElementById('btn-loop').classList.toggle('active-state', vid.loop);
+    log('Loop ' + (vid.loop ? 'ativado' : 'desativado'));
+  }
+
+  // ── FULLSCREEN ────────────────────────────────────────────
+  function toggleFullscreen() {
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen;
+    const exit = document.exitFullscreen || document.webkitExitFullscreen;
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+      req?.call(el);
+    } else {
+      exit?.call(document);
+    }
+  }
+
+  // ── DRAG & DROP ───────────────────────────────────────────
+  const dz = document.getElementById('drop-zone');
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault();
+    dz.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file?.type.startsWith('video/')) loadFile({ files: [file] });
+  });
+
+  // ── INIT ──────────────────────────────────────────────────
+  setDot('dot-vis', 'active');
+  log('Abre um vídeo para começar.');
+</script>
+</body>
+</html>

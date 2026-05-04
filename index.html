@@ -89,24 +89,27 @@
     aspect-ratio: 16/9;
   }
 
-  /* Video kept alive for decode; canvas displays the frames */
+  /* Video must stay at opacity:1 so the browser composites it —
+     otherwise drawImage() receives black frames */
   .video-container video {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
     object-fit: contain;
-    opacity: 0.01;
     z-index: 0;
   }
 
+  /* Canvas sits on top; transparent bg so video shows through if
+     drawImage ever fails to get a new frame */
   #vid-canvas {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
     z-index: 1;
-    background: #000;
+    background: transparent;
+    pointer-events: none;
   }
 
   .video-overlay {
@@ -436,9 +439,9 @@
       <span class="control-icon">⛶</span>
       <span>Fullscreen</span>
     </button>
-    <button class="control-btn" onclick="vid.currentTime = 0; vid.play()">
-      <span class="control-icon">⏮</span>
-      <span>Restart</span>
+    <button class="control-btn" onclick="togglePiP()">
+      <span class="control-icon">⧉</span>
+      <span>PiP</span>
     </button>
   </div>
 
@@ -488,9 +491,8 @@
   let canvasRaf = null;
 
   // ── CANVAS RENDER LOOP ────────────────────────────────────
-  // Tesla freezes <video> display when driving but decode continues
-  // (proven by audio still playing). Canvas is not blocked, so we
-  // draw each decoded frame here instead.
+  let diagInterval = null;
+
   function startCanvasLoop() {
     if (canvasRaf) return;
     const container = vidCanvas.parentElement;
@@ -504,19 +506,42 @@
         const scale = Math.min(cw / vw, ch / vh);
         const dw = vw * scale, dh = vh * scale;
         const dx = (cw - dw) / 2, dy = (ch - dh) / 2;
-        vidCtx.fillStyle = '#000';
-        vidCtx.fillRect(0, 0, cw, ch);
+        // clearRect instead of fillRect — canvas bg is transparent,
+        // so if drawImage returns black the video element shows through
+        vidCtx.clearRect(0, 0, cw, ch);
         vidCtx.drawImage(vid, dx, dy, dw, dh);
       }
       canvasRaf = requestAnimationFrame(draw);
     }
     draw();
     log('Canvas render ativo', 'ok');
+    startDiag();
   }
 
   function stopCanvasLoop() {
     if (canvasRaf) { cancelAnimationFrame(canvasRaf); canvasRaf = null; }
     vidCtx.clearRect(0, 0, vidCanvas.width, vidCanvas.height);
+    stopDiag();
+  }
+
+  // ── DIAGNÓSTICO ───────────────────────────────────────────
+  // Logs vid.currentTime every 5s — lets us see if Tesla pauses
+  // the element (time stops) or only freezes display (time advances)
+  let lastDiagTime = -1;
+  function startDiag() {
+    stopDiag();
+    diagInterval = setInterval(() => {
+      const t = vid.currentTime.toFixed(1);
+      const advancing = lastDiagTime >= 0 && parseFloat(t) > lastDiagTime;
+      const state = vid.paused ? 'PAUSED' : (advancing ? 'PLAYING▶' : 'FROZEN?');
+      log(`t=${t}s paused=${vid.paused} rdy=${vid.readyState} → ${state}`,
+          advancing ? 'ok' : 'warn');
+      lastDiagTime = parseFloat(t);
+    }, 5000);
+  }
+  function stopDiag() {
+    if (diagInterval) { clearInterval(diagInterval); diagInterval = null; }
+    lastDiagTime = -1;
   }
 
   // ── LOGGING ──────────────────────────────────────────────
@@ -797,6 +822,21 @@
     vid.loop = !vid.loop;
     document.getElementById('btn-loop').classList.toggle('active-state', vid.loop);
     log('Loop ' + (vid.loop ? 'ativado' : 'desativado'));
+  }
+
+  // ── PICTURE-IN-PICTURE ────────────────────────────────────
+  async function togglePiP() {
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+        log('PiP desativado');
+      } else {
+        await vid.requestPictureInPicture();
+        log('PiP ativo — testa se o Tesla permite vídeo em PiP', 'ok');
+      }
+    } catch (e) {
+      log('PiP não suportado: ' + e.message, 'warn');
+    }
   }
 
   // ── FULLSCREEN ────────────────────────────────────────────

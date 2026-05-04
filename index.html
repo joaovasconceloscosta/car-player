@@ -403,7 +403,7 @@
   <div class="input-section">
     <span class="input-label">URL do vídeo (MP4, HLS, WebM...)</span>
     <div class="input-row">
-      <input type="text" id="url-input" placeholder="https://exemplo.com/video.mp4" />
+      <input type="text" id="url-input" placeholder="https://exemplo.com/video.mp4" value="https://iptv-org.github.io/iptv/countries/pt.m3u" />
       <button class="btn" onclick="loadUrl()">▶ Load</button>
     </div>
   </div>
@@ -428,17 +428,17 @@
   </div>
 
   <div class="presets">
+    <div class="preset-card" onclick="loadPreset('https://iptv-org.github.io/iptv/countries/pt.m3u')">
+      <div class="preset-name">Portugal IPTV</div>
+      <div class="preset-url">iptv-org · 70+ canais PT</div>
+    </div>
+    <div class="preset-card" onclick="loadPreset('https://raw.githubusercontent.com/LITUATUI/M3UPT/main/M3U/M3UPT.m3u')">
+      <div class="preset-name">M3UPT</div>
+      <div class="preset-url">streams oficiais PT</div>
+    </div>
     <div class="preset-card" onclick="loadPreset('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4')">
-      <div class="preset-name">Big Buck Bunny</div>
-      <div class="preset-url">gtv-videos-bucket / sample MP4</div>
-    </div>
-    <div class="preset-card" onclick="loadPreset('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4')">
-      <div class="preset-name">Elephants Dream</div>
-      <div class="preset-url">gtv-videos-bucket / sample MP4</div>
-    </div>
-    <div class="preset-card" onclick="loadPreset('https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8')">
-      <div class="preset-name">HLS Stream</div>
-      <div class="preset-url">mux.dev / test HLS</div>
+      <div class="preset-name">Teste MP4</div>
+      <div class="preset-url">Big Buck Bunny</div>
     </div>
     <div class="preset-card" onclick="document.querySelector('.upload-zone input').click()">
       <div class="preset-name">Ficheiro local</div>

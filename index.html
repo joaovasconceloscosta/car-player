@@ -89,27 +89,18 @@
     aspect-ratio: 16/9;
   }
 
-  /* Video must stay at opacity:1 so the browser composites it —
-     otherwise drawImage() receives black frames */
   .video-container video {
-    position: absolute;
-    inset: 0;
     width: 100%;
     height: 100%;
     object-fit: contain;
-    z-index: 0;
-  }
-
-  /* Canvas sits on top; transparent bg so video shows through if
-     drawImage ever fails to get a new frame */
-  #vid-canvas {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 1;
-    background: transparent;
-    pointer-events: none;
+    display: block;
+    /* Force a dedicated GPU compositing layer.
+       Tesla's lockout targets the standard video render path;
+       these properties push it through the filter/transform pipeline instead. */
+    transform: translateZ(0);
+    will-change: transform;
+    filter: brightness(1.0001);
+    -webkit-filter: brightness(1.0001);
   }
 
   .video-overlay {
@@ -414,7 +405,6 @@
   <div class="video-container">
     <video id="vid" playsinline webkit-playsinline x5-playsinline
            preload="auto" controls></video>
-    <canvas id="vid-canvas"></canvas>
     <div class="video-overlay" id="overlay">Sem vídeo</div>
   </div>
 
@@ -486,48 +476,10 @@
   const vid = document.getElementById('vid');
   const overlay = document.getElementById('overlay');
   const logEl = document.getElementById('log');
-  const vidCanvas = document.getElementById('vid-canvas');
-  const vidCtx = vidCanvas.getContext('2d');
-  let canvasRaf = null;
-
-  // ── CANVAS RENDER LOOP ────────────────────────────────────
-  let diagInterval = null;
-
-  function startCanvasLoop() {
-    if (canvasRaf) return;
-    const container = vidCanvas.parentElement;
-    vidCanvas.width  = container.clientWidth  * (window.devicePixelRatio || 1);
-    vidCanvas.height = container.clientHeight * (window.devicePixelRatio || 1);
-
-    function draw() {
-      if (vid.readyState >= 2 && vid.videoWidth > 0) {
-        const cw = vidCanvas.width, ch = vidCanvas.height;
-        const vw = vid.videoWidth,  vh = vid.videoHeight;
-        const scale = Math.min(cw / vw, ch / vh);
-        const dw = vw * scale, dh = vh * scale;
-        const dx = (cw - dw) / 2, dy = (ch - dh) / 2;
-        // clearRect instead of fillRect — canvas bg is transparent,
-        // so if drawImage returns black the video element shows through
-        vidCtx.clearRect(0, 0, cw, ch);
-        vidCtx.drawImage(vid, dx, dy, dw, dh);
-      }
-      canvasRaf = requestAnimationFrame(draw);
-    }
-    draw();
-    log('Canvas render ativo', 'ok');
-    startDiag();
-  }
-
-  function stopCanvasLoop() {
-    if (canvasRaf) { cancelAnimationFrame(canvasRaf); canvasRaf = null; }
-    vidCtx.clearRect(0, 0, vidCanvas.width, vidCanvas.height);
-    stopDiag();
-  }
-
   // ── DIAGNÓSTICO ───────────────────────────────────────────
-  // Logs vid.currentTime every 5s — lets us see if Tesla pauses
-  // the element (time stops) or only freezes display (time advances)
+  let diagInterval = null;
   let lastDiagTime = -1;
+
   function startDiag() {
     stopDiag();
     diagInterval = setInterval(() => {
@@ -539,6 +491,7 @@
       lastDiagTime = parseFloat(t);
     }, 5000);
   }
+
   function stopDiag() {
     if (diagInterval) { clearInterval(diagInterval); diagInterval = null; }
     lastDiagTime = -1;
@@ -626,10 +579,10 @@
   vid.addEventListener('playing', () => {
     setDot('dot-play', 'active');
     overlay.classList.add('hidden');
-    startCanvasLoop();
+    startDiag();
   });
   vid.addEventListener('waiting', () => setDot('dot-play', 'warn'));
-  vid.addEventListener('ended',   () => stopCanvasLoop());
+  vid.addEventListener('ended',   () => stopDiag());
   vid.addEventListener('error',   () => log('Erro no vídeo: ' + (vid.error?.message || '?'), 'warn'));
 
   // ── HLS.JS (lazy) ─────────────────────────────────────────
@@ -802,7 +755,7 @@
   }
 
   function playStream(src) {
-    stopCanvasLoop();
+    stopDiag();
     destroyHls();
     overlay.classList.add('hidden');
     userPaused = false;
